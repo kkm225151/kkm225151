@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>数位对决 - Tactical Board Pro</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & Babel CDNs -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto+Mono:wght@400;600&display=swap');
+        
+        :root {
+            --gemini-bg: #f8fafd;
+        }
+
+        body {
+            font-family: 'Google Sans', 'PingFang SC', system-ui, sans-serif;
+            background-color: var(--gemini-bg);
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        .gemini-gradient-text {
+            background: linear-gradient(90deg, #4285f4, #9b72cb, #d96570); 
+            -webkit-background-clip: text; 
+            -webkit-text-fill-color: transparent;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(16px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes scaleUp {
+            from { opacity: 0; transform: scale(0.9); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .animate-slide-in {
+            animation: slideIn 0.5s cubic-bezier(0.2, 0, 0, 1) forwards;
+        }
+
+        .animate-fade-in {
+            animation: fadeIn 0.4s ease-out forwards;
+        }
+
+        .animate-scale-up {
+            animation: scaleUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #e0e3e9;
+            border-radius: 10px;
+        }
+
+        input::-webkit-outer-spin-button,
+        input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .mode-card {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .mode-card:active {
+            transform: scale(0.96);
+        }
+
+        /* 自定义 Slider 样式 */
+        .difficulty-slider {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 8px;
+            background: #e0e3e9;
+            border-radius: 4px;
+            outline: none;
+        }
+        .difficulty-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #fff;
+            border: 2px solid #ddd;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://esm.sh/@google/genai@^1.40.0",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body class="bg-[#f8fafd] text-[#1f1f1f]">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        // --- 子组件: 记录行 ---
+        const RecordItem = ({ record, onUpdate, onRemove, isAIMode }) => {
+            const toggleNote = (index) => {
+                const states = ['none', 'correct', 'wrong'];
+                const current = record.notes[index];
+                const next = states[(states.indexOf(current) + 1) % states.length];
+                const newNotes = [...record.notes];
+                newNotes[index] = next;
+                onUpdate({ notes: newNotes });
+            };
+
+            const changeCount = (delta) => {
+                if (isAIMode) return; 
+                const newVal = Math.max(0, record.correctCount + delta);
+                onUpdate({ correctCount: newVal });
+            };
+
+            return (
+                <div className="grid grid-cols-[1fr_1fr_1.8fr_0.3fr] items-center p-4 border-b border-[#f1f3f4] hover:bg-gray-50/50 transition-colors animate-slide-in">
+                    <div className="font-mono text-[#7c72f1] font-bold text-sm tracking-widest">
+                        {record.guess.split('').join(' ')}
+                    </div>
+                    
+                    <div className="flex items-center gap-1.5 text-sm font-bold text-[#7c72f1]">
+                        <span className="w-4 text-center">{record.correctCount}</span>
+                        {!isAIMode && (
+                            <div className="flex flex-col scale-75">
+                                <button type="button" onClick={() => changeCount(1)} className="hover:text-blue-600">▲</button>
+                                <button type="button" onClick={() => changeCount(-1)} className="hover:text-red-600">▼</button>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="flex gap-1 overflow-x-auto">
+                        {record.notes.map((note, idx) => (
+                            <div key={idx} onClick={() => toggleNote(idx)} className={`w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-[10px] cursor-pointer border transition-all ${
+                                note === 'none' ? 'bg-white border-gray-200 text-gray-300' : 
+                                note === 'correct' ? 'bg-[#e6f4ea] border-[#34a853] text-[#137333]' : 
+                                'bg-[#fce8e6] border-[#ea4335] text-[#b3261e]'
+                            }`}>
+                                {note === 'none' ? '·' : note === 'correct' ? '对' : '错'}
+                            </div>
+                        ))}
+                    </div>
+                    <button type="button" onClick={onRemove} className="text-gray-300 hover:text-red-500 text-xl text-right transition-colors">×</button>
+                </div>
+            );
+        };
+
+        // --- 子组件: 引导页 ---
+        const SetupPage = ({ onStart, showToast }) => {
+            const [stage, setStage] = useState('selection'); 
+            const [mode, setMode] = useState(null); 
+            const [difficulty, setDifficulty] = useState(3);
+            const [input, setInput] = useState('');
+            const [isRulesOpen, setIsRulesOpen] = useState(false);
+
+            const handleModeSelect = (selectedMode) => {
+                setMode(selectedMode);
+                if (selectedMode === 'ai') {
+                    setStage('difficulty');
+                } else {
+                    setStage('input');
+                }
+            };
+
+            const handleStart = () => {
+                if (mode === 'ai') {
+                    const digits = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+                    let res = '';
+                    for (let i = 0; i < difficulty; i++) {
+                        const idx = Math.floor(Math.random() * digits.length);
+                        res += digits.splice(idx, 1)[0];
+                    }
+                    onStart(res, 'ai');
+                } else {
+                    if (input.length < 3 || input.length > 5) { showToast("请设置 3-5 位数字"); return; }
+                    if (new Set(input).size !== input.length) { showToast("数字不能重复"); return; }
+                    onStart(input, 'local');
+                }
+            };
+
+            const restartSetup = () => {
+                setStage('selection');
+                setMode(null);
+                setInput('');
+            };
+
+            const getDifficultyLabel = (val) => {
+                if (val === 3) return "简单";
+                if (val === 4) return "一般";
+                if (val === 5) return "困难";
+                return "";
+            };
+
+            const ModeButton = ({ title, subTitle, emoji, onClick }) => (
+                <button 
+                    onClick={onClick}
+                    className="mode-card flex flex-col items-center justify-center aspect-square border-2 border-blue-100 bg-white rounded-[32px] p-6 transition-all hover:border-[#7c72f1] hover:bg-[#f8fafd] shadow-sm hover:shadow-md"
+                >
+                    <div className="text-4xl mb-4">{emoji}</div>
+                    <div className="flex flex-col text-lg font-bold text-[#1f1f1f] leading-tight text-center">
+                        <span>{title}</span>
+                        {subTitle && <span>{subTitle}</span>}
+                    </div>
+                </button>
+            );
+
+            return (
+                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-white h-full relative overflow-y-auto">
+                    
+                    {stage === 'selection' && (
+                        <div className="animate-fade-in w-full flex flex-col items-center">
+                            <h1 className="text-4xl md:text-5xl font-normal leading-tight text-[#1f1f1f] mb-12">
+                                你好，<span className="gemini-gradient-text font-bold">准备好</span><br />
+                                开始对决了吗？
+                            </h1>
+                            <div className="grid grid-cols-2 gap-5 w-full max-w-[400px] mb-8">
+                                <ModeButton 
+                                    emoji="🤖" 
+                                    title="自己玩儿" 
+                                    onClick={() => handleModeSelect('ai')} 
+                                />
+                                <ModeButton 
+                                    emoji="👥" 
+                                    title="好友" 
+                                    subTitle="面对面玩儿" 
+                                    onClick={() => handleModeSelect('local')} 
+                                />
+                            </div>
+                            <button type="button" onClick={() => setIsRulesOpen(true)} className="mt-4 text-[#1a73e8] text-sm font-medium flex items-center gap-1 hover:underline">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                查看游戏规则
+                            </button>
+                        </div>
+                    )}
+
+                    {stage === 'difficulty' && (
+                        <div className="animate-slide-in w-full max-w-sm flex flex-col items-center">
+                            <h2 className="text-base font-bold text-[#1f1f1f] mb-16">请选择难度</h2>
+                            <div className="w-full mb-12 flex flex-col items-center">
+                                <div className="text-lg font-bold mb-8">{difficulty}位数 {getDifficultyLabel(difficulty)}</div>
+                                <div className="w-full px-8">
+                                    <input 
+                                        type="range" 
+                                        min="3" 
+                                        max="5" 
+                                        step="1" 
+                                        value={difficulty} 
+                                        onChange={(e) => setDifficulty(parseInt(e.target.value))}
+                                        className="difficulty-slider" 
+                                    />
+                                </div>
+                            </div>
+                            <button 
+                                type="button" 
+                                onClick={handleStart} 
+                                className="px-16 py-4 rounded-[22px] text-lg font-bold bg-[#7B70FF] text-white active:scale-95 w-full max-w-[240px] shadow-sm transition-transform"
+                            >
+                                开始游戏
+                            </button>
+                            <button onClick={restartSetup} className="mt-8 text-[#1a73e8] text-xs font-bold hover:underline">重新开始游戏</button>
+                        </div>
+                    )}
+
+                    {stage === 'input' && (
+                        <div className="animate-slide-in w-full max-w-sm flex flex-col items-center">
+                            <h2 className="text-base font-bold text-[#1f1f1f] mb-12">请设置 3-5 位的不重复数字</h2>
+                            <div className="w-full mb-12 px-4">
+                                <div className="bg-[#f0f4f9] rounded-[24px] p-6 flex items-center justify-center">
+                                    <input 
+                                        type="text" 
+                                        inputMode="numeric" 
+                                        autoFocus
+                                        value={input} 
+                                        onChange={(e) => setInput(e.target.value.replace(/[^0-9]/g, '').slice(0, 5))} 
+                                        placeholder="输 入 你 的 数 字 密 码" 
+                                        className="w-full bg-transparent text-center text-xl tracking-[4px] outline-none font-bold text-gray-400 placeholder:text-gray-300" 
+                                    />
+                                </div>
+                            </div>
+                            <button 
+                                type="button" 
+                                onClick={handleStart} 
+                                className={`px-16 py-4 rounded-[22px] text-lg font-bold transition-all shadow-sm w-full max-w-[240px] ${
+                                    input.length >= 3 ? 'bg-[#7B70FF] text-white active:scale-95' : 'bg-gray-100 text-gray-300'
+                                }`}
+                            >
+                                开始游戏
+                            </button>
+                            <button onClick={restartSetup} className="mt-8 text-[#1a73e8] text-xs font-bold hover:underline">重新开始游戏</button>
+                        </div>
+                    )}
+
+                    {isRulesOpen && (
+                        <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm animate-fade-in">
+                            <div className="bg-white w-full max-w-[450px] rounded-[32px] shadow-2xl overflow-hidden">
+                                <div className="p-8 text-left">
+                                    <h2 className="text-xl font-bold mb-4">游戏规则</h2>
+                                    <p className="text-sm text-gray-600 mb-4 leading-relaxed">
+                                        这是一个经典的猜数字逻辑游戏：<br/>
+                                        1. 对方设置 3-5 位不重复的数字。<br/>
+                                        2. 猜测时，对方反馈“正确数”（数值及位置均正确的个数）。例如：密码为1234，对方猜1256，回“2个正确”；对方猜1236，回“3个正确”。<br/>
+                                        3. 最先完全猜中者获胜。
+                                    </p>
+                                    <button onClick={() => setIsRulesOpen(false)} className="w-full bg-[#f0f4f9] py-3 rounded-xl font-bold text-[#1a73e8]">我知道了</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // --- 子组件: 游戏页 ---
+        const GamePage = ({ state, onAddRecord, onUpdateRecord, onRemoveRecord, onRestart, onStartNew, showToast }) => {
+            const secretLength = state.mySecret.length;
+            const [digitValues, setDigitValues] = useState(Array(secretLength).fill(''));
+            const [lockedStates, setLockedStates] = useState(Array(secretLength).fill(false));
+            const [isSecretVisible, setIsSecretVisible] = useState(false);
+            const [showSuccessModal, setShowSuccessModal] = useState(false);
+            
+            const scrollContainerRef = useRef(null);
+            const inputRefs = useRef([]);
+
+            const fullGuess = digitValues.join('');
+            const isInputValid = fullGuess.length === secretLength;
+
+            useEffect(() => {
+                if (scrollContainerRef.current) scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+            }, [state.history.length]);
+
+            const handleDigitChange = (index, val) => {
+                if (lockedStates[index]) return;
+                const char = val.replace(/[^0-9]/g, '').slice(-1);
+                const newValues = [...digitValues];
+                newValues[index] = char;
+                setDigitValues(newValues);
+
+                if (char !== '' && index < secretLength - 1) {
+                    for (let i = index + 1; i < secretLength; i++) {
+                        if (!lockedStates[i]) {
+                            inputRefs.current[i]?.focus();
+                            break;
+                        }
+                    }
+                }
+            };
+
+            const handleKeyDown = (index, e) => {
+                if (e.key === 'Backspace' && digitValues[index] === '' && index > 0) {
+                    for (let i = index - 1; i >= 0; i--) {
+                        if (!lockedStates[i]) {
+                            inputRefs.current[i]?.focus();
+                            break;
+                        }
+                    }
+                } else if (e.key === 'Enter' && isInputValid) {
+                    handleAdd();
+                }
+            };
+
+            const toggleLock = (index) => {
+                const newLocks = [...lockedStates];
+                newLocks[index] = !newLocks[index];
+                setLockedStates(newLocks);
+            };
+
+            const handleAdd = () => {
+                if (!isInputValid) return;
+
+                // 检查重复猜测
+                const isAlreadyGuessed = state.history.some(record => record.guess === fullGuess);
+                if (isAlreadyGuessed) {
+                    showToast("你已猜过此数字");
+                    return;
+                }
+                
+                let correctCount = 0;
+                if (state.gameMode === 'ai') {
+                    for (let i = 0; i < secretLength; i++) {
+                        if (fullGuess[i] === state.mySecret[i]) correctCount++;
+                    }
+                }
+
+                onAddRecord(fullGuess, correctCount);
+                
+                const resetValues = digitValues.map((val, idx) => lockedStates[idx] ? val : '');
+                setDigitValues(resetValues);
+                const firstEmptyIndex = lockedStates.findIndex(locked => !locked);
+                if (firstEmptyIndex !== -1) inputRefs.current[firstEmptyIndex]?.focus();
+
+                if (state.gameMode === 'ai' && correctCount === secretLength) {
+                    setShowSuccessModal(true);
+                }
+            };
+
+            const handlePlayAgain = () => {
+                setShowSuccessModal(false);
+                const digits = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+                let res = '';
+                for (let i = 0; i < secretLength; i++) {
+                    const idx = Math.floor(Math.random() * digits.length);
+                    res += digits.splice(idx, 1)[0];
+                }
+                onStartNew(res, state.gameMode);
+            };
+
+            return (
+                <div className="flex flex-col h-full overflow-hidden bg-white">
+                    <div className="flex-none p-4 pt-6">
+                        <div className="bg-[#f0f4f9] rounded-2xl p-4 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <span className="text-gray-800 font-bold text-sm">
+                                    {state.gameMode === 'ai' ? '电脑出题：' : '我设置的密码：'}
+                                </span>
+                                <span className="font-mono text-gray-800 text-sm tracking-[6px]">
+                                    {state.gameMode === 'ai' 
+                                        ? (isSecretVisible ? state.mySecret : '* '.repeat(secretLength).trim())
+                                        : state.mySecret.split('').join(' ')
+                                    }
+                                </span>
+                            </div>
+                            {state.gameMode === 'ai' && (
+                                <button onClick={() => setIsSecretVisible(!isSecretVisible)} className="px-3 py-1 bg-white border border-blue-200 rounded-lg text-[10px] text-blue-600 font-bold">
+                                    {isSecretVisible ? '隐藏答案' : '查看答案'}
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="px-6 pt-4 pb-1">
+                        <h3 className="text-sm font-bold text-[#1f1f1f]">本轮猜测历史</h3>
+                    </div>
+
+                    <div className="grid grid-cols-[1fr_1fr_1.8fr_0.3fr] px-6 py-2 text-[10px] text-[#1f1f1f] font-bold border-b border-gray-50">
+                        <div>猜测内容</div><div>正确数</div><div>辅助笔记</div><div></div>
+                    </div>
+
+                    <div ref={scrollContainerRef} className="flex-1 overflow-y-auto bg-white custom-scrollbar px-2">
+                        {state.history.length === 0 ? (
+                            <div className="h-full flex flex-col items-center justify-center opacity-40 pt-10">
+                                <div className="text-4xl mb-4">🎯</div>
+                                <div className="text-xs text-gray-400 italic">暂无记录，开始猜测吧</div>
+                            </div>
+                        ) : (
+                            <div className="pb-4">
+                                {state.history.map(record => (
+                                    <RecordItem 
+                                        key={record.id} 
+                                        record={record} 
+                                        isAIMode={state.gameMode === 'ai'}
+                                        onUpdate={(u) => onUpdateRecord(record.id, u)} 
+                                        onRemove={() => onRemoveRecord(record.id)} 
+                                    />
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="flex-none w-full p-4 pt-4 pb-8 bg-white border-t border-gray-50 shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
+                        <div className="max-w-[360px] mx-auto">
+                            <div className="flex items-center justify-between mb-4 px-2">
+                                <div className="flex gap-2">
+                                    {Array.from({ length: secretLength }).map((_, idx) => (
+                                        <div key={idx} className="flex flex-col items-center gap-1">
+                                            <button type="button" onClick={() => toggleLock(idx)} className="opacity-60">
+                                                <svg className={`w-3 h-3 ${lockedStates[idx] ? 'text-red-500' : 'text-gray-300'}`} fill="currentColor" viewBox="0 0 24 24">
+                                                    <path d="M12 2c-2.76 0-5 2.24-5 5v4H6c-1.1 0-2 .9-2 2v7c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-7c0-1.1-.9-2-2-2h-1V7c0-2.76-2.24-5-5-5zM9 7c0-1.66 1.34-3 3-3s3 1.34 3 3v4H9V7z"/>
+                                                </svg>
+                                            </button>
+                                            <input
+                                                ref={el => inputRefs.current[idx] = el}
+                                                type="text"
+                                                inputMode="numeric"
+                                                value={digitValues[idx]}
+                                                onChange={(e) => handleDigitChange(idx, e.target.value)}
+                                                onKeyDown={(e) => handleKeyDown(idx, e)}
+                                                disabled={lockedStates[idx]}
+                                                className={`w-10 h-10 text-center text-lg font-mono font-bold rounded-full border transition-all outline-none ${
+                                                    lockedStates[idx] ? 'bg-gray-100 border-gray-200 text-gray-400' : 'bg-blue-50 border-blue-100 text-blue-600'
+                                                }`}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                                <button onClick={onRestart} className="text-[#7c72f1] text-[10px] font-bold uppercase tracking-wider hover:underline">重新开始游戏</button>
+                            </div>
+                            
+                            <button 
+                                type="button" 
+                                onClick={handleAdd} 
+                                disabled={!isInputValid} 
+                                className={`w-full py-4 rounded-2xl text-base font-bold transition-all ${
+                                    isInputValid ? 'bg-[#7B70FF] text-white active:scale-[0.98]' : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                                }`}
+                            >
+                                确定猜测
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 胜利弹窗 */}
+                    {showSuccessModal && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/40 backdrop-blur-md animate-fade-in">
+                            <div className="bg-white w-full max-w-[420px] rounded-[40px] shadow-2xl overflow-hidden animate-scale-up p-10 text-center">
+                                <div className="text-6xl mb-6">🎉</div>
+                                <h2 className="text-2xl font-bold text-[#1f1f1f] mb-4">
+                                    恭喜你！<br/>猜对本轮数字 <span className="text-[#7c72f1] font-mono">{state.mySecret}</span>！
+                                </h2>
+                                <p className="text-[#444746] mb-10 text-lg">
+                                    本次游戏共猜测 <span className="font-bold text-[#7c72f1]">{state.history.length}</span> 轮
+                                </p>
+                                <div className="flex flex-col gap-4">
+                                    <button 
+                                        onClick={handlePlayAgain}
+                                        className="w-full bg-[#7c72f1] text-white py-5 rounded-[24px] font-bold text-lg shadow-lg active:scale-95 transition-all"
+                                    >
+                                        再来一局
+                                    </button>
+                                    <button 
+                                        onClick={() => setShowSuccessModal(false)}
+                                        className="w-full bg-[#f0f4f9] text-[#7c72f1] py-5 rounded-[24px] font-bold text-lg active:scale-95 transition-all"
+                                    >
+                                        好的
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [state, setState] = useState({ mySecret: '', gameMode: null, history: [], isGameStarted: false });
+            const [toast, setToast] = useState({ message: '', visible: false });
+
+            const showToast = useCallback((message) => {
+                setToast({ message, visible: true });
+                setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 2500);
+            }, []);
+
+            const startGame = (secret, mode) => setState({ ...state, mySecret: secret, gameMode: mode, isGameStarted: true, history: [] });
+            const addRecord = (guess, autoCorrectCount = 0) => {
+                const newRecord = { id: Date.now().toString(), guess, correctCount: autoCorrectCount, notes: Array(guess.length).fill('none') };
+                setState(prev => ({ ...prev, history: [newRecord, ...prev.history] }));
+            };
+            const updateRecord = (id, updates) => setState(prev => ({ ...prev, history: prev.history.map(r => r.id === id ? { ...r, ...updates } : r) }));
+            const removeRecord = (id) => setState(prev => ({ ...prev, history: prev.history.filter(r => r.id !== id) }));
+            const restartGame = () => setState({ mySecret: '', gameMode: null, history: [], isGameStarted: false });
+
+            return (
+                <div className="h-[100dvh] w-full flex justify-center items-center bg-[#f8fafd] overflow-hidden">
+                    <div className="w-full max-w-[650px] h-full md:h-[92vh] md:max-h-[800px] md:rounded-[40px] bg-white shadow-2xl overflow-hidden flex flex-col relative animate-slide-in border border-gray-100">
+                        {!state.isGameStarted ? (
+                            <SetupPage onStart={startGame} showToast={showToast} />
+                        ) : (
+                            <GamePage 
+                                state={state} 
+                                onAddRecord={addRecord} 
+                                onUpdateRecord={updateRecord} 
+                                onRemoveRecord={removeRecord} 
+                                onRestart={restartGame} 
+                                onStartNew={startGame}
+                                showToast={showToast} 
+                            />
+                        )}
+                        <div className={`fixed bottom-24 left-1/2 -translate-x-1/2 z-[100] transition-all duration-300 transform ${toast.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
+                            <div className="bg-[#1f1f1f] text-white px-6 py-3 rounded-full shadow-2xl text-sm font-medium whitespace-nowrap">{toast.message}</div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
